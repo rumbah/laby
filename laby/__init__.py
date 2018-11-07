@@ -17,6 +17,38 @@ def Data(x, y, sx=None, sy=None, x_name=None, y_name=None, x_unit=None, y_unit=N
     result.y_unit = y_unit or 'y'
     return result
 
+
+def sigdig(x, n=2):
+    """ 
+    Rounds x to n significant decimal places and returns the result as a
+    tuple (a, b) where x=~ a*10**b, 10 <= a < 100
+    """
+    b = int(np.floor(np.log10(x)))
+    a = round(x * 10 ** -b, 1) * 10
+
+    return int(a), b - 1
+
+def fmt_round(x, sig=2):
+    """ round a number to significant digits """
+    a, b = sigdig(x, sig)
+    return '{:.{}f}'.format(a * 10 ** b, max(-b, 0))
+
+def fmt_err(x, err, sig=2, exp_display=5):
+    """ format a number with an error """
+    err_a, err_b = sigdig(err, sig)
+    if err_b < 0:
+        x = round(x, -err_b)
+    if exp_display and err_b >= exp_display:
+        err = '{}e{}'.format(err_a, err_b)
+    else:
+        if err_b >= 0:
+            err = err_a * 10 ** err_b
+        else:
+            err = str(err_a).zfill(-err_b + 1)
+            err = '{}.{}'.format(err[0], err[1:])
+
+    return '{:.{dig}f} +-{}'.format(x, err, dig=max(-err_b, 0))
+
 def parse_data(string, x_name=None, y_name=None, x_unit=None, y_unit=None):
     cols = columns(string)
     # check if have title row
@@ -118,8 +150,8 @@ class MyOutput(Output):
     def pprint(self):
         print("Fit parameters:")
         for i, a in enumerate(self.beta):
-            print("  a{} = {} +- {}".format(i+1, a, self.sd_beta[i]))
-        print("X^2 = {}".format(self.sum_square))
+            print("  a{} = {}".format(i+1, fmt_err(a, self.sd_beta[i])))
+        print("X^2 = {}".format(fmt_round(self.sum_square)))
         cr_diff = np.log2(self.chi2_reduced)
         if -1 < cr_diff < 1:
             cr_well = '=~'
@@ -127,7 +159,7 @@ class MyOutput(Output):
             cr_well = '<' if cr_diff < 0 else '>'
         else:
             cr_well = '<<' if cr_diff < 0 else '>>'
-        print("X^2_reduced = {} ({} 1)".format(self.chi2_reduced, cr_well))
+        print("X^2_reduced = {} ({} 1)".format(fmt_round(self.chi2_reduced), cr_well))
         if .25 < self.p_value < .75:
             wellness = "GOOD"
         elif .05 < self.p_value < .95:
@@ -136,7 +168,7 @@ class MyOutput(Output):
             wellness = "BAD"
         else:
             wellness = "WTF"
-        print("p_value = {} ({})".format(self.p_value, wellness))
+        print("p_value = {} ({})".format(fmt_round(self.p_value), wellness))
 
 
 class MyModel(Model):
