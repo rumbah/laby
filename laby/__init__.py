@@ -1,6 +1,6 @@
 import re
 import numpy as np
-from scipy.odr import RealData, Model, ODR, Output
+from scipy import odr
 from scipy.stats import chi2
 import matplotlib.pyplot as plt
 from decimal import Decimal
@@ -10,7 +10,7 @@ def columns(data):
     return mat.transpose()
 
 def Data(x, y, sx=None, sy=None, x_name=None, y_name=None, x_unit=None, y_unit=None):
-    result = RealData(x, y, sx=sx, sy=sy)
+    result = odr.RealData(x, y, sx=sx, sy=sy)
     result.x_name = x_name or 'x'
     result.y_name = y_name or 'y'
     result.x_unit = x_unit or 'x'
@@ -24,9 +24,9 @@ def sigdig(x, n=2):
     tuple (a, b) where x=~ a*10**b, 10 <= a < 100
     """
     b = int(np.floor(np.log10(x)))
-    a = round(x * 10 ** -b, 1) * 10
+    a = round(x * 10 ** -b, n - 1) * 10**(n - 1)
 
-    return int(a), b - 1
+    return int(a), b - n + 1
 
 def fmt_round(x, sig=2):
     """ round a number to significant digits """
@@ -91,7 +91,7 @@ def parse_data(string, y_first=True):
         x_name, x_unit, y_name, y_unit = y_name, y_unit, x_name, x_unit
     return Data(x, y, sx=sx, sy=sy, x_name=x_name, y_name=y_name, x_unit=x_unit, y_unit=y_unit)
 
-class MyOutput(Output):
+class Output(odr.Output):
     def __init__(self, orig_output, data, model):
         self.data = data
         self.model = model
@@ -190,24 +190,27 @@ class MyOutput(Output):
         print("p_value = {} ({})".format(fmt_round(self.p_value), wellness))
 
 
-class MyModel(Model):
-    def __init__(self, *args, name=None, **kwargs):
+class Model(odr.Model):
+    def __init__(self, *args, name=None, params=None, **kwargs):
         super().__init__(*args, **kwargs)
         if name is not None:
             self.name = name
+        self.params = params
 
     def fit(self, data, guess=None, simple=False):
-        odr = ODR(data, self, beta0=guess)
-        odr.set_job(fit_type = 2 if simple else 0)
-        output = odr.run()
+        if guess is None:
+            guess = [0] * self.params
+        x = odr.ODR(data, self, beta0=guess)
+        x.set_job(fit_type = 2 if simple else 0)
+        output = x.run()
 
-        return MyOutput(output, data, self)
+        return Output(output, data, self)
 
-LinearModel = MyModel(lambda a, x: sum(a * [x, 1]), name='Linear')
-QuadraticModel = MyModel(lambda a, x: sum(a * [x**2, x, 1]), name='Quadratic')
-ExponentialModel = MyModel(lambda a, x: a[1] * np.e ** (a[0] * x) + a[2], name='Exponential')
-LogarithmicModel = MyModel(lambda a, x: a[0] * np.log(a[1] + x) + a[2], name='Logarithmic')
-InverseModel = MyModel(lambda a, x: sum(a * [1 / x, 1]), name='Inverse')
+LinearModel = Model(lambda a, x: sum(a * [x, 1]), name='Linear', params=2)
+QuadraticModel = Model(lambda a, x: sum(a * [x**2, x, 1]), name='Quadratic', params=3)
+ExponentialModel = Model(lambda a, x: a[1] * np.e ** (a[0] * x) + a[2], name='Exponential', params=3)
+LogarithmicModel = Model(lambda a, x: a[0] * np.log(a[1] + x) + a[2], name='Logarithmic', params=3)
+InverseModel = Model(lambda a, x: sum(a * [1 / x, 1]), name='Inverse', params=2)
 
 
 def test():
