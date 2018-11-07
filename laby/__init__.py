@@ -1,4 +1,4 @@
-
+import re
 import numpy as np
 from scipy.odr import RealData, Model, ODR, Output
 from scipy.stats import chi2
@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from decimal import Decimal
 
 def columns(data):
-    mat = np.array([[float(x) for x in row.split()] for row in data.splitlines()])
+    mat = np.array([[float(x) for x in row.split()] for row in data.strip().splitlines()])
     return mat.transpose()
 
 def Data(x, y, sx=None, sy=None, x_name=None, y_name=None, x_unit=None, y_unit=None):
@@ -49,27 +49,46 @@ def fmt_err(x, err, sig=2, exp_display=5):
 
     return '{:.{dig}f} +-{}'.format(x, err, dig=max(-err_b, 0))
 
-def parse_data(string, x_name=None, y_name=None, x_unit=None, y_unit=None):
-    cols = columns(string)
+def parse_unit(s):
+    m = re.match(r'(\S+)\s*\[(.*)\]', s)
+    if m:
+        return m.groups()
+    return s, None
+
+def parse_data(string, y_first=True):
     # check if have title row
+    names = [None] * 4
     try:
         firstline = string.split('\n')[0]
         columns(firstline)
     except ValueError:
-        names = firstline
+        names = firstline.split()
+        string = string[len(firstline):]
+
+    cols = columns(string)
+
     sx, sy = None, None
     if len(cols) == 1:
         y, = cols
+        y_name, y_unit = parse_unit(names[0])
         x = range(len(cols))
     elif len(cols) == 2:
-        x, y = cols
-
+        y, x = cols
+        y_name, y_unit = parse_unit(names[0])
+        x_name, x_unit = parse_unit(names[1])
     elif len(cols) == 3:
-        x, y, sy = cols
+        y, sy, x = cols
+        y_name, y_unit = parse_unit(names[0])
+        x_name, x_unit = parse_unit(names[2])
     elif len(cols) == 4:
-        x, sx, y, sy = cols
+        y, sy, x, sx = cols
+        y_name, y_unit = parse_unit(names[0])
+        x_name, x_unit = parse_unit(names[2])
     else:
         raise ValueError("Not sure how to parse %d data columns" % len(cols))
+    if not y_first:
+        x, sx, y, sy = y, sy, x, sx
+        x_name, x_unit, y_name, y_unit = y_name, y_unit, x_name, x_unit
     return Data(x, y, sx=sx, sy=sy, x_name=x_name, y_name=y_name, x_unit=x_unit, y_unit=y_unit)
 
 class MyOutput(Output):
