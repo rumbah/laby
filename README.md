@@ -8,6 +8,9 @@ Parse data formatted in columns. Accepts 1-4 columns of data: (y), (y, x), (y, y
 Can also optionally parse the title line as names for the samples, and extracts units from brackets.
 Returns a `Data` instance.
 
+#### `data.linear_fit(guess=None, ...), data.quad_fit(guess=None, ...)`
+Do a fit
+
 #### `*Model`
 Generic models used for fitting, e.g Linear, Quadratic. 
 
@@ -20,9 +23,6 @@ Generic models used for fitting, e.g Linear, Quadratic.
 
 `output.plot(...)` - Plot the fit graph.
 
-### Miscellaneous
-#### `fmt_err(x, err, sig=2, exp_display=5)`
-Format a value with an uncertainty. Returns the values formatted as e.g "0.0434 +-0.0022", with `sig` determining how many significant digits of error value are included, and `exp_display` determines the minimum (negative) exponent for displaying the value in scientific notation (e.g 34e-10).
 
 ## Usage example
 ```python
@@ -36,7 +36,7 @@ Format a value with an uncertainty. Returns the values formatted as e.g "0.0434 
 0.697	0.004140694 0.145	0.000408248	
 0.589166667	0.002238551 0.105	0.000408248	
 0.4585	0.002203412 0.065	0.000408248""", y_first=False)
->>> output = QuadraticModel.fit(data)
+>>> output = data.quad_fit()
 >>> output.pprint()
 ```
 ```

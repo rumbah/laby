@@ -4,50 +4,31 @@ from scipy import odr
 from scipy.stats import chi2
 import matplotlib.pyplot as plt
 from decimal import Decimal
+from uncertainties import ufloat, unumpy
 
 def columns(data):
     mat = np.array([[float(x) for x in row.split()] for row in data.strip().splitlines()])
     return mat.transpose()
 
-def Data(x, y, sx=None, sy=None, x_name=None, y_name=None, x_unit=None, y_unit=None):
-    result = odr.RealData(x, y, sx=sx, sy=sy)
-    result.x_name = x_name or 'x'
-    result.y_name = y_name or 'y'
-    result.x_unit = x_unit or 'x'
-    result.y_unit = y_unit or 'y'
-    return result
+class Data(odr.RealData):
+    def __init__(self, x, y, sx=None, sy=None, x_name=None, y_name=None, x_unit=None, y_unit=None):
+        super().__init__(x, y, sx=sx, sy=sy)
+        self.x_name = x_name or 'x'
+        self.y_name = y_name or 'y'
+        self.x_unit = x_unit or ''
+        self.y_unit = y_unit or ''
 
+    def fit(self, model, *args, **kwargs):
+        return model.fit(self, *args, **kwargs)
 
-def sigdig(x, n=2):
-    """ 
-    Rounds x to n significant decimal places and returns the result as a
-    tuple (a, b) where x=~ a*10**b, 10 <= a < 100
-    """
-    b = int(np.floor(np.log10(x)))
-    a = round(x * 10 ** -b, n - 1) * 10**(n - 1)
+    def linear_fit(self, *args, **kwargs):
+        return self.fit(LinearModel, *args, **kwargs)
 
-    return int(a), b - n + 1
+    def quad_fit(self, *args, **kwargs):
+        return self.fit(QuadraticModel, *args, **kwargs)
 
-def fmt_round(x, sig=2):
-    """ round a number to significant digits """
-    a, b = sigdig(x, sig)
-    return '{:.{}f}'.format(a * 10 ** b, max(-b, 0))
-
-def fmt_err(x, err, sig=2, exp_display=5):
-    """ format a number with an error """
-    err_a, err_b = sigdig(err, sig)
-    if err_b < 0:
-        x = round(x, -err_b)
-    if exp_display and err_b >= exp_display:
-        err = '{}e{}'.format(err_a, err_b)
-    else:
-        if err_b >= 0:
-            err = err_a * 10 ** err_b
-        else:
-            err = str(err_a).zfill(-err_b + 1)
-            err = '{}.{}'.format(err[0], err[1:])
-
-    return '{:.{dig}f} +-{}'.format(x, err, dig=max(-err_b, 0))
+    def log_fit(self, *args, **kwargs):
+        return self.fit(LogarithmicModel, *args, **kwargs)
 
 def parse_unit(s):
     m = re.match(r'(\S+)\s*\[(.*)\]', s)
@@ -99,6 +80,7 @@ class Output(odr.Output):
 
         self.chi2_reduced = self.res_var
         self.p_value = chi2.sf(self.sum_square, len(data.x) - len(self.beta))
+        self.params = [ufloat(x, y) for x, y in zip(self.beta, self.sd_beta)]
 
 
     def plot(self, plt=plt, error_fill=False, size=(20, 10), title=None, residuals=True, **kwargs):
@@ -168,9 +150,9 @@ class Output(odr.Output):
 
     def pprint(self):
         print("Fit parameters:")
-        for i, a in enumerate(self.beta):
-            print("  a{} = {}".format(i+1, fmt_err(a, self.sd_beta[i])))
-        print("X^2 = {}".format(fmt_round(self.sum_square)))
+        for i, a in enumerate(self.params):
+            print("  a{} = {:.2u}".format(i+1, a))
+        print("X^2 = {:.5f}".format(self.sum_square))
         cr_diff = np.log2(self.chi2_reduced)
         if -1 < cr_diff < 1:
             cr_well = '=~'
@@ -178,7 +160,7 @@ class Output(odr.Output):
             cr_well = '<' if cr_diff < 0 else '>'
         else:
             cr_well = '<<' if cr_diff < 0 else '>>'
-        print("X^2_reduced = {} ({} 1)".format(fmt_round(self.chi2_reduced), cr_well))
+        print("X^2_reduced = {:.2f} ({} 1)".format(self.chi2_reduced, cr_well))
         if .25 < self.p_value < .75:
             wellness = "GOOD"
         elif .05 < self.p_value < .95:
@@ -187,7 +169,7 @@ class Output(odr.Output):
             wellness = "BAD"
         else:
             wellness = "WTF"
-        print("p_value = {} ({})".format(fmt_round(self.p_value), wellness))
+        print("p_value = {:.2f} ({})".format(self.p_value, wellness))
 
 
 class Model(odr.Model):
