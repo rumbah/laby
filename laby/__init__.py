@@ -1,17 +1,29 @@
+import itertools
 import re
 import numpy as np
 from scipy import odr
 from scipy.stats import chi2
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
 from decimal import Decimal
-from uncertainties import ufloat, unumpy
+from uncertainties import ufloat, UFloat
 
 def columns(data):
     mat = np.array([[float(x) for x in row.split()] for row in data.strip().splitlines()])
     return mat.transpose()
 
+def _get_err(arr, override):
+    if len(arr) > 0 and all(hasattr(x, 's') and hasattr(x, 'n') for x in arr):
+        return zip(*[(x.n, x.s) for x in arr])
+    return arr, override
+
+def take_not(arr, indices):
+    return np.take(arr, [x for x in np.arange(len(arr)) if x not in indices])
+
 class Data(odr.RealData):
     def __init__(self, x, y, sx=None, sy=None, x_name=None, y_name=None, x_unit=None, y_unit=None):
+        x, sx = _get_err(x, sx)
+        y, sy = _get_err(y, sy)
         super().__init__(x, y, sx=sx, sy=sy)
         self.x_name = x_name or 'x'
         self.y_name = y_name or 'y'
@@ -19,6 +31,8 @@ class Data(odr.RealData):
         self.y_unit = y_unit or ''
 
     def fit(self, model, *args, **kwargs):
+        if not isinstance(model, Model):
+            model = Model(model)
         return model.fit(self, *args, **kwargs)
 
     def linear_fit(self, *args, **kwargs):
@@ -29,6 +43,14 @@ class Data(odr.RealData):
 
     def log_fit(self, *args, **kwargs):
         return self.fit(LogarithmicModel, *args, **kwargs)
+
+    def select(self, indices):
+        return Data(
+            np.take(self.x, indices), 
+            np.take(self.y, indices), 
+            np.take(self.sx, indices) if hasattr(self.sx, '__len__') else self.sx, 
+            np.take(self.sy, indices) if hasattr(self.sy, '__len__') else self.sy, 
+            self.x_name, self.y_name, self.x_unit, self.y_unit)
 
 def parse_unit(s):
     m = re.match(r'(\S+)\s*\[(.*)\]', s)
@@ -83,64 +105,102 @@ class Output(odr.Output):
         self.params = [ufloat(x, y) for x, y in zip(self.beta, self.sd_beta)]
 
 
-    def plot(self, plt=plt, error_fill=False, size=(20, 10), title=None, residuals=True, **kwargs):
-        fig, ax = plt.subplots(figsize=size)
+    def _init_ax(self, ax, data, title, xlim=None, ylim=None, resid=False):
+        if title is None:
+            title = self._default_title() + ' - Residuals Plot' if resid else ''
+        if not ax.get_title():
+            ax.set_title(title)
+        if not ax.get_xlabel():
+            x_name = getattr(data, "x_name", 'x')
+            if getattr(data, 'x_unit', None):
+                x_name = '{} [{}]'.format(x_name, data.x_unit)
+            ax.set_xlabel(x_name)
+        if not ax.get_ylabel():
+            y_name = getattr(data, "y_name", 'y')
+            if resid:
+                y_name = '{} - f({})'.format(y_name, getattr(data, "x_name", 'x'))
+            if getattr(data, 'y_unit', None):
+                y_name = '{} [{}]'.format(y_name, data.y_unit)
+            ax.set_ylabel(y_name)
+        ax.grid(True)
+
+        xlim_current, ylim_current = (), ()
+        if ax.has_data():
+            xlim_current, ylim_current = ax.get_xlim(), ax.get_ylim()
+        if xlim is not None:
+            xlim = tuple(xlim) + xlim_current
+            ax.set_xlim(min(xlim), max(xlim))
+        if ylim is not None:
+            ylim = tuple(ylim) + ylim_current
+            ax.set_ylim(min(ylim), max(ylim))
+        
+    def plot_data(self, ax=None, title=None, color=None, error_fill=False, size=(16, 8)):
         data = self.data
+        if ax is None:
+            fig, ax = plt.subplots(figsize=size)
+            fig.set_facecolor('w')
+
         xmin, xmax, xcnt = data.x.min(), data.x.max(), len(data.x)
         x_size = abs(xmax - xmin)
         x_model = np.linspace(xmin - x_size * 0.1, xmax + x_size * 0.1, xcnt * 3)
-        plt.plot(x_model, self.model.fcn(self.beta, x_model), 'black')
+
+        self._init_ax(ax, data, title, (x_model.min(), x_model.max()))
+
         if data.sx is not None:
-            plt.errorbar(data.x, data.y, xerr=data.sx, yerr=data.sy, fmt='s', color='b', visible=False, alpha=0.6, ecolor='k',
-                capsize=2, capthick=0.5)
+            ax.errorbar(data.x, data.y, xerr=data.sx, yerr=data.sy, fmt='s', color='b', visible=False, alpha=0.6, ecolor='k')
 
-        plt.scatter(data.x, data.y, facecolor='red', marker='s',edgecolor='black', s=70, alpha=1)
-        plt.rc('font', size=25)
-        if title is None:
-            title = self._default_title()
-        ax.set_title(title)
-        x_name = getattr(data, "x_name", 'x')
-        if getattr(data, 'x_unit', None):
-            x_name = '{} [{}]'.format(x_name, data.x_unit)
-        y_name = getattr(data, "y_name", 'y')
-        if getattr(data, 'y_unit', None):
-            y_name = '{} [{}]'.format(y_name, data.y_unit)
-
-        ax.set_xlabel(x_name)
-        ax.set_ylabel(y_name)
-        ax.set_xlim(x_model.min(), x_model.max())
-        ax.grid(True)
-        fig.set_facecolor('w')
-
+        ax.scatter(data.x, data.y, c=color or 'red', marker='s',edgecolor='black', s=40, alpha=1)
+        if hasattr(self, 'selected_indices'):
+            ax.scatter(take_not(data.x, self.selected_indices),
+                       take_not(data.y, self.selected_indices),
+                       c='lightgrey', marker='s',edgecolor='grey', s=40, alpha=1)
+        ax.plot(x_model, self.model.fcn(self.beta, x_model), color or 'black')
+        
         if error_fill:
             sigma_ab = np.sqrt(np.diagonal(self.cov_beta))
             bound_upper = self.model.fcn(x_model, *(self.beta + sigma_ab))
             bound_lower = self.model.fcn(x_model, *(self.beta - sigma_ab))
             # plotting the confidence intervals
-            plt.fill_between(x_model, bound_lower, bound_upper, color='midnightblue', alpha=0.15)
+            ax.fill_between(x_model, bound_lower, bound_upper, color='midnightblue', alpha=0.15)
 
-        if residuals:
-            data = self.data
-            xmin, xmax, xcnt = data.x.min(), data.x.max(), len(data.x)
-            x_size = abs(xmax - xmin)
-            x_model = np.linspace(xmin - x_size * 0.1, xmax + x_size * 0.1, xcnt * 3)
-            residuals = data.y - self.model.fcn(self.beta, data.x)
+    def plot_resid(self, ax=None, title=None, color=None, size=(16, 8)):
+        data = self.data
+
+        if ax is None:
             fig, ax = plt.subplots(figsize=size)
-            plt.scatter(data.x, residuals, facecolor='red', marker='s', edgecolor='black', s=70, alpha=1)
-            ax.errorbar(data.x, residuals, xerr=data.sx, fmt='s', yerr=data.sy, marker='s',
-                        visible=False, alpha=0.6, capsize=10, capthick=0.5, ecolor='k')
-            ax.set_xlim(x_model.min(), x_model.max())
-            ax.set_ylim(residuals.min() - np.abs(residuals.min()*0.5), residuals.max() + np.abs(residuals.max()*0.5))
-            ax.set_title(title + " - Residuals Plot")
-            resid_y_title = "{} - f({})".format(getattr(data, "y_name", 'y'), getattr(data, 'x_name', 'x'))
-            if getattr(data, 'y_unit', None):
-                resid_y_title = '{} [{}]'.format(resid_y_title, data.y_unit)
-            ax.set_ylabel(resid_y_title)
-            ax.set_xlabel(x_name)
-            ax.set_xlim(x_model.min(), x_model.max())
-            ax.axhline(color='red')
-            ax.grid(True)
             fig.set_facecolor('w')
+
+
+        xmin, xmax, xcnt = data.x.min(), data.x.max(), len(data.x)
+        x_size = abs(xmax - xmin)
+        x_model = np.linspace(xmin - x_size * 0.1, xmax + x_size * 0.1, xcnt * 3)
+        residuals = data.y - self.model.fcn(self.beta, data.x)
+
+        y_diff = max(abs(residuals.min() - max(abs(residuals.min()*0.5), data.sy.max())),
+                     abs(residuals.max() + max(abs(residuals.max()*0.5), data.sy.max())))
+        ylim = (y_diff, -y_diff)
+
+        self._init_ax(ax, data, title, (x_model.min(), x_model.max()), ylim, resid=True)
+
+        ax.scatter(data.x, residuals, facecolor=color or 'red', 
+            marker='s', edgecolor='black', s=70, alpha=1)
+        if hasattr(self, 'selected_indices'):
+            ax.scatter(take_not(data.x, self.selected_indices),
+                       take_not(residuals, self.selected_indices),
+                       c='lightgrey', marker='s',edgecolor='grey', s=70, alpha=1)
+        ax.errorbar(data.x, residuals, xerr=data.sx, fmt='s', yerr=data.sy, marker='s',
+                    visible=False, alpha=0.6, ecolor='k')
+        ax.axhline(color='red')
+
+    def plot(self, size=(18, 8), horizontal=True, title=None):
+        plt.tight_layout()
+        plt.rc('font', size=14, family='sans-serif')
+        rows, cols = (1, 2) if horizontal else (2, 1)
+        w, h = size
+        fig, [ax, rax] = plt.subplots(ncols=cols, nrows=rows, figsize=size)
+        fig.set_facecolor('w')
+        self.plot_data(ax, title=title)
+        self.plot_resid(rax, title=title + '- Residuals' if title else title)
 
     def _default_title(self):
             return '{} Fit of {}({})'.format(
@@ -151,7 +211,7 @@ class Output(odr.Output):
     def pprint(self):
         print("Fit parameters:")
         for i, a in enumerate(self.params):
-            print("  a{} = {:.2u}".format(i+1, a))
+            print("  a{} = {:.2u} ({:%})".format(i+1, a, rel_err(a)))
         print("X^2 = {:.5f}".format(self.sum_square))
         cr_diff = np.log2(self.chi2_reduced)
         if -1 < cr_diff < 1:
@@ -175,18 +235,29 @@ class Output(odr.Output):
 class Model(odr.Model):
     def __init__(self, *args, name=None, params=None, **kwargs):
         super().__init__(*args, **kwargs)
-        if name is not None:
-            self.name = name
+        self.name = name or 'Model'
         self.params = params
 
-    def fit(self, data, guess=None, simple=False):
+    def fit(self, data, guess=None, remove=0, simple=False):
         if guess is None:
             guess = [0] * self.params
         x = odr.ODR(data, self, beta0=guess)
         x.set_job(fit_type = 2 if simple else 0)
-        output = x.run()
-
-        return Output(output, data, self)
+        output = Output(x.run(), data, self)
+        if remove > 0:
+            to_remove = int(len(data.x) * remove)
+            print(to_remove)
+            good_indices = list(sorted(np.argsort(output.delta)[:len(data.x)-to_remove]))
+            new_data = data.select(good_indices)
+            x = odr.ODR(new_data, self, beta0=guess)
+            x.set_job(fit_type = 2 if simple else 0)
+            orig_output = output
+            output = Output(x.run(), new_data, self)
+            output.orig_output = output
+            output.new_data = new_data
+            output.data = data
+            output.selected_indices = good_indices
+        return output
 
 LinearModel = Model(lambda a, x: sum(a * [x, 1]), name='Linear', params=2)
 QuadraticModel = Model(lambda a, x: sum(a * [x**2, x, 1]), name='Quadratic', params=3)
@@ -194,6 +265,31 @@ ExponentialModel = Model(lambda a, x: a[1] * np.e ** (a[0] * x) + a[2], name='Ex
 LogarithmicModel = Model(lambda a, x: a[0] * np.log(a[1] + x) + a[2], name='Logarithmic', params=3)
 InverseModel = Model(lambda a, x: sum(a * [1 / x, 1]), name='Inverse', params=2)
 
+
+def plot_many(outputs, title=None, size=(20, 10), residuals=False, horizontal=False):
+    plt.tight_layout()
+    plt.rc('font', size=14, family='sans-serif')
+    if residuals:
+        rows, cols = (1, 2) if horizontal else (2, 1)
+    else:
+        rows, cols = (1, 1)
+    w, h = size
+    fig, ax = plt.subplots(ncols=cols, nrows=rows, figsize=size)
+    fig.set_facecolor('w')
+    if residuals:
+        ax, rax = ax
+    colors = itertools.cycle(['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'black', 'pink', 'brown'])
+    for color, output in zip(colors, outputs):
+        if residuals:
+            output.plot_resid(rax, color=color, title=title + '- Residuals' if title else title)
+        output.plot_data(ax, color=color, title=title)
+
+def Nsigma(measured, expected):
+    sdiff = (measured.s ** 2 + expected.s ** 2) ** .5
+    return abs(measured.n - expected.n) / sdiff if sdiff else float('inf')
+
+def rel_err(value):
+    return abs(value.s / value.n) if value.n else float('inf')
 
 def test():
     x, y, z = columns("1 2 3\n4 5 6\n7 8 9")
