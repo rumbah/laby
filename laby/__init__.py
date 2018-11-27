@@ -115,6 +115,7 @@ class Output(odr.Output):
             if getattr(data, 'x_unit', None):
                 x_name = '{} [{}]'.format(x_name, data.x_unit)
             ax.set_xlabel(x_name)
+            
         if not ax.get_ylabel():
             y_name = getattr(data, "y_name", 'y')
             if resid:
@@ -149,12 +150,18 @@ class Output(odr.Output):
         if data.sx is not None:
             ax.errorbar(data.x, data.y, xerr=data.sx, yerr=data.sy, fmt='s', color='b', visible=False, alpha=0.6, ecolor='k')
 
-        ax.scatter(data.x, data.y, c=color or 'red', marker='s',edgecolor='black', s=40, alpha=1)
+        x, y = data.x, data.y
         if hasattr(self, 'selected_indices'):
             ax.scatter(take_not(data.x, self.selected_indices),
                        take_not(data.y, self.selected_indices),
-                       c='lightgrey', marker='s',edgecolor='grey', s=40, alpha=1)
-        ax.plot(x_model, self.model.fcn(self.beta, x_model), color or 'black')
+                       c='grey', marker='x', s=50, alpha=1)
+            x, y = self.new_data.x, self.new_data.y
+        if len(data.x) < 30:
+            ax.scatter(x, y, c=color or 'red', marker='s',edgecolor='black', s=40, alpha=1)
+        else:
+            ax.plot(x, y, c=color or 'red', linewidth=3)
+            # too many points, draw a line
+        ax.plot(x_model, self.model.fcn(self.beta, x_model), 'black')
         
         if error_fill:
             sigma_ab = np.sqrt(np.diagonal(self.cov_beta))
@@ -182,12 +189,15 @@ class Output(odr.Output):
 
         self._init_ax(ax, data, title, (x_model.min(), x_model.max()), ylim, resid=True)
 
-        ax.scatter(data.x, residuals, facecolor=color or 'red', 
-            marker='s', edgecolor='black', s=70, alpha=1)
+        x, y = data.x, residuals
         if hasattr(self, 'selected_indices'):
             ax.scatter(take_not(data.x, self.selected_indices),
                        take_not(residuals, self.selected_indices),
-                       c='lightgrey', marker='s',edgecolor='grey', s=70, alpha=1)
+                       c='grey', marker='x', s=40, alpha=1)
+            x, y = np.take(self.data.x, self.selected_indices), np.take(residuals, self.selected_indices)
+
+        ax.scatter(x, y, facecolor=color or 'red', 
+            marker='x', s=40, alpha=1)
         ax.errorbar(data.x, residuals, xerr=data.sx, fmt='s', yerr=data.sy, marker='s',
                     visible=False, alpha=0.6, ecolor='k')
         ax.axhline(color='red')
@@ -246,8 +256,7 @@ class Model(odr.Model):
         output = Output(x.run(), data, self)
         if remove > 0:
             to_remove = int(len(data.x) * remove)
-            print(to_remove)
-            good_indices = list(sorted(np.argsort(output.delta)[:len(data.x)-to_remove]))
+            good_indices = list(sorted(np.argsort(abs(output.delta))[:len(data.x)-to_remove]))
             new_data = data.select(good_indices)
             x = odr.ODR(new_data, self, beta0=guess)
             x.set_job(fit_type = 2 if simple else 0)
