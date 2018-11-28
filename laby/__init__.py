@@ -18,7 +18,7 @@ def _get_err(arr, override):
     return arr, override
 
 def take_not(arr, indices):
-    return np.take(arr, [x for x in np.arange(len(arr)) if x not in indices])
+    return np.take(arr, [x for x in range(len(arr)) if x not in indices])
 
 class Data(odr.RealData):
     def __init__(self, x, y, sx=None, sy=None, x_name=None, y_name=None, x_unit=None, y_unit=None):
@@ -155,7 +155,7 @@ class Output(odr.Output):
             ax.scatter(take_not(data.x, self.selected_indices),
                        take_not(data.y, self.selected_indices),
                        c='grey', marker='x', s=50, alpha=1)
-            x, y = self.new_data.x, self.new_data.y
+            x, y = self.selected_data.x, self.selected_data.y
         if len(data.x) < 30:
             ax.scatter(x, y, c=color or 'red', marker='s',edgecolor='black', s=40, alpha=1)
         else:
@@ -248,22 +248,21 @@ class Model(odr.Model):
         self.name = name or 'Model'
         self.params = params
 
-    def fit(self, data, guess=None, remove=0, simple=False):
+    def fit(self, data, guess=None, exclude=(), simple=False):
         if guess is None:
             guess = [0] * self.params
         x = odr.ODR(data, self, beta0=guess)
         x.set_job(fit_type = 2 if simple else 0)
         output = Output(x.run(), data, self)
-        if remove > 0:
-            to_remove = int(len(data.x) * remove)
-            good_indices = list(sorted(np.argsort(abs(output.delta))[:len(data.x)-to_remove]))
-            new_data = data.select(good_indices)
-            x = odr.ODR(new_data, self, beta0=guess)
+        if exclude:
+            good_indices = [x for x in range(len(data.x)) if x not in exclude]
+            selected_data = data.select(good_indices)
+            x = odr.ODR(selected_data, self, beta0=guess)
             x.set_job(fit_type = 2 if simple else 0)
             orig_output = output
-            output = Output(x.run(), new_data, self)
+            output = Output(x.run(), selected_data, self)
             output.orig_output = output
-            output.new_data = new_data
+            output.selected_data = selected_data
             output.data = data
             output.selected_indices = good_indices
         return output
