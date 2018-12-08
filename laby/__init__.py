@@ -107,7 +107,7 @@ class Output(odr.Output):
 
     def _init_ax(self, ax, data, title, xlim=None, ylim=None, resid=False):
         if title is None:
-            title = self._default_title() + ' - Residuals Plot' if resid else ''
+            title = self._default_title() + (' - Residuals Plot' if resid else '')
         if not ax.get_title():
             ax.set_title(title)
         if not ax.get_xlabel():
@@ -248,14 +248,14 @@ class Model(odr.Model):
         self.name = name or 'Model'
         self.params = params
 
-    def fit(self, data, guess=None, exclude=(), simple=False):
+    def fit(self, data, guess=None, exclude=None, simple=False):
         if guess is None:
             guess = [0] * self.params
         x = odr.ODR(data, self, beta0=guess)
         x.set_job(fit_type = 2 if simple else 0)
         output = Output(x.run(), data, self)
         if exclude:
-            good_indices = [x for x in range(len(data.x)) if x not in exclude]
+            good_indices = [i for i in range(len(data.x)) if i not in exclude]
             selected_data = data.select(good_indices)
             x = odr.ODR(selected_data, self, beta0=guess)
             x.set_job(fit_type = 2 if simple else 0)
